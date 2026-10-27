@@ -13,6 +13,14 @@ interface Stats {
   startedAt: string;
 }
 
+function blockServer(): void{
+  console.log("Frozen at", Date.now());
+  const end = Date.now() + 15000;
+  while(Date.now() < end){}
+  console.log("Unfrozen at", Date.now());
+  return;
+}
+
 // Reads flags with parseArgs (--block uses multiple: true). Exits with usage text on bad input.
 function parseCli(argv: string[]): Config{
   let healthPort = 5000;
@@ -142,6 +150,7 @@ function main(): void{
     console.log("Server starting on", config.port, "at", stats.startedAt,);
     console.log("Blocklist:", blockList);
     handleConnection(socket, blockList, config, stats);
+    setTimeout(blockServer, 20_000);
   });
   server.listen(config.port);
 
