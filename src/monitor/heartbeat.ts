@@ -79,9 +79,12 @@ function start() {
 
 async function init() {
     server.setMaxListeners(2);
+    server.maxConnections = 1;
     server.prependListener('connection', (stream) => {
+        requestStack = [];
+        slowResponseBucket = 0;
         connectionStatus = true;
-        console.log(`Service Connected at ${Date.now().toLocaleString()} from ${stream.remoteAddress}:${stream.remotePort} starting ping `)
+        console.log(`Service Connected at ${Date().toLocaleString()} from ${stream.remoteAddress}:${stream.remotePort} starting ping `)
         //connection specific response metrics
         const slowRequestBucketInterval = setInterval(()=> {
             if(slowResponseBucket > 0) {
@@ -100,15 +103,15 @@ async function init() {
                 }
                 return false
             });
-            if(droppedRequests.length > 10) {
+            if(droppedRequests.length > DROPPED_REQUEST_LIMIT) {
                 const date = new Date();
                 console.error("[ERROR] Monitored process exceeded dropped request limit! Dropped ",droppedRequests.length," requests.", date.toLocaleString());
             }
         }, 2000)
-        return ()=> {
+        stream.on('close', ()=> {
             clearInterval(slowRequestBucketInterval);
             clearInterval(droppedRequestMonitor);
-        }
+        })
         
     });
     return;
