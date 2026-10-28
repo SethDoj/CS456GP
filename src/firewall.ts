@@ -1,3 +1,4 @@
+import { Socket } from "node:dgram";
 import net from "node:net"; 
 
 //Heartbeat port: 5000;
@@ -65,7 +66,7 @@ function buildBlockList(entries: string[]): net.BlockList{
 function log(action: "allowed" | "rejected", ip: string): void{
   const now = new Date();
   const time = now.toLocaleString();
-  console.log('IP', ip , action, 'at', now);
+  console.log('IP', ip , action, 'at', time);
 }
 
 // Checks the IP; rejects (log + destroy) or forwards.
@@ -99,30 +100,9 @@ function handleConnection(socket: net.Socket, blockList: net.BlockList, config: 
 function startHealthServer(port: number, stats: Stats): net.Server{
   const server = net.createServer((socket) => {
     socket.on('error', () => socket.destroy());
-    let buffer = '';
 
-    socket.on('data', (chunk) => {
-      buffer += chunk.toString('utf8');
-
-      // Guard against a client that never sends a newline
-      if (buffer.length > 1024) {
-        socket.destroy();
-        return;
-      }
-
-      // Handle every complete line in the buffer
-      let newline: number;
-      while ((newline = buffer.indexOf('\n')) !== -1) {
-        const line = buffer.slice(0, newline).trim();
-        buffer = buffer.slice(newline + 1);
-
-        if (line === 'PING') {
-          socket.write('PONG\n');
-        } else {
-          socket.end('ERR unknown command\n');
-          return;
-        }
-      }
+    socket.on('data', (data) => {
+      socket.write(data.toString())
     });
   });
   
@@ -150,9 +130,10 @@ function main(): void{
     console.log("Server starting on", config.port, "at", stats.startedAt,);
     console.log("Blocklist:", blockList);
     handleConnection(socket, blockList, config, stats);
-    setTimeout(blockServer, 20_000);
   });
   server.listen(config.port);
+
+  setTimeout(blockServer, Math.random() * 20000 + 15000);
 
 }
 main();
