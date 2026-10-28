@@ -57,7 +57,7 @@ function handleResponse(data: string | NonSharedBuffer) {
         //TODO: handle case of repeated slow RTT
         if(reqTime == -1) throw new Error("[ERROR] failed to parse request time");
 
-        //console.log(`Received: ${parsedData} at ${receivedTime}`);
+        console.log(`Received: ${parsedData} at ${receivedTime}`);
         if(receivedTime - reqTime > SLOW_REQUEST_TIME) {
             slowResponseBucket++;
             console.warn(`[WARN] Slow heartbeat RTT took [${receivedTime - reqTime}ms] at ${new Date().toLocaleString()}`);
@@ -73,7 +73,7 @@ function ping(socket: net.Socket) {
         const now = Date.now();
         socket.write("HEARTBEAT:" + now + "\n");
         requestStack.push("HEARTBEAT:"+ now);
-        //console.log("Ping sent: ", date.toLocaleString());
+        console.log("Ping sent: ", Date.toLocaleString());
         return;
     } catch(error) {
         console.error("[ERROR] Some error occured attempting to ping the service...");
