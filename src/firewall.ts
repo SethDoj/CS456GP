@@ -1,5 +1,4 @@
-import { Socket } from "node:dgram";
-import net from "node:net"; 
+import net from "node:net";
 
 //Heartbeat port: 5000;
 interface Config {
@@ -16,7 +15,7 @@ interface Stats {
 
 function blockServer(): void{
   console.log("Frozen at", Date.now());
-  const end = Date.now() + 15000;
+  const end = Date.now() + 30000;
   while(Date.now() < end){}
   console.log("Unfrozen at", Date.now());
   return;
@@ -96,22 +95,33 @@ function handleConnection(socket: net.Socket, blockList: net.BlockList, config: 
 
 }
 
-//The heartbeat service polls this.
-function startHealthServer(port: number, stats: Stats): net.Server{
-  const server = net.createServer((socket) => {
-    socket.on('error', () => socket.destroy());
-
-    socket.on('data', (data) => {
-      socket.write(data.toString())
-    });
-  });
-  
-  server.on('error', (err) => {
-    console.error(`Health server error on port ${port}:`, err.message);
+//Connects to the heartbeat service and echoes its pings back.
+function connectToHeartbeat(port: number): void{
+  //holds a partial message until its newline arrives
+  let buffer = "";
+  const socket = net.createConnection({ port, host: "127.0.0.1" }, () => {
+    console.log("Connected to heartbeat service on port", port);
   });
 
-  server.listen(port, "127.0.0.1");
-  return server;
+  socket.on('data', (data) => {
+    // Pings are newline-delimited and can arrive merged (e.g. after a freeze).
+    buffer += data.toString();
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for(const line of lines){
+      if(line.length > 0) socket.write(line + "\n");
+    }
+  });
+
+  socket.on('error', (err) => {
+    console.warn(`Heartbeat connection error: ${err.message}`);
+  });
+
+  // Retry if the monitor isn't up yet or the connection drops.
+  socket.on('close', () => {
+    console.log("Connection was closed or unsucsessful, retyring");
+    setTimeout(() => connectToHeartbeat(port), 2000);
+  });
 }
 
 function main(): void{
@@ -124,7 +134,7 @@ function main(): void{
     startedAt: new Date().toISOString(),
   };
 
-  startHealthServer(5000, stats);
+  connectToHeartbeat(config.healthPort);
 
   const server = net.createServer((socket) => {
     console.log("Server starting on", config.port, "at", stats.startedAt,);

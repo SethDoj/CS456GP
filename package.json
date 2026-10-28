@@ -6,6 +6,8 @@
   "main": "index.js",
   "scripts": {
     "start": "tsx src/firewall.ts",
+    "startbeat": "tsx src/monitor/heartbeat.ts",
+    "testattack": "tsx src/monitor/test-server.ts",
     "typecheck": "tsc"
   },
   "keywords": [],

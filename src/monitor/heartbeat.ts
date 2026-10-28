@@ -15,18 +15,30 @@ let slowResponseBucket = 0;
 
 const server: net.Server =  net.createServer((socket) => {
     console.log('Client connected');
-    socket.on('close', (stream)=> {
-        console.log('[WARN] Client disconnected.');
-        connectionStatus = false;
-    })
-    socket.on('data', (data) => {
-        handleResponse(data)
-    });
-    setInterval(()=> {
+    //holds a partial message until its newline arrives
+    let buffer = '';
+    const pingInterval = setInterval(()=> {
         if(connectionStatus) {
             ping(socket)
         }
     }, 1000);
+    socket.on('error', (err) => {
+        console.warn('[WARN] Socket error:', err.message);
+    });
+    socket.on('close', (stream)=> {
+        console.log('[WARN] Client disconnected.');
+        connectionStatus = false;
+        clearInterval(pingInterval);
+    })
+    socket.on('data', (data) => {
+        //messages are newline-delimited since TCP can merge or split them
+        buffer += data.toString();
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+        for(const line of lines) {
+            if(line.length > 0) handleResponse(line);
+        }
+    });
 });
 
 
@@ -59,7 +71,7 @@ function handleResponse(data: string | NonSharedBuffer) {
 function ping(socket: net.Socket) {
     try {
         const now = Date.now();
-        socket.write("HEARTBEAT:" + now);
+        socket.write("HEARTBEAT:" + now + "\n");
         requestStack.push("HEARTBEAT:"+ now);
         //console.log("Ping sent: ", date.toLocaleString());
         return;
