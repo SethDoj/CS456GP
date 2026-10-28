@@ -1,10 +1,13 @@
 import * as net from 'net';
 
 const PORT = 5000;
+//how many slow/dropped requests until errored
 const SLOW_BUCKET_LIMIT = 10;
 const DROPPED_REQUEST_LIMIT = 10;
 //ms
+//this sets how long a request needs to take be "slow"
 const SLOW_REQUEST_TIME = 200;
+//how long until a request is considered dropped.
 const REQUEST_TIMEOUT_TIME = 10000;
 let requestStack: string[]=[];
 let connectionStatus = false;
