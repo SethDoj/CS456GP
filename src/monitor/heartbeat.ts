@@ -32,7 +32,7 @@ function handleResponse(data: string | NonSharedBuffer) {
         const parsedData: string = data.toString();
         const receivedTime: number = Date.now();    
         const index: number = requestStack.indexOf(parsedData);
-        if(index == -1) throw new Error("[ERROR] Matching request not found for response. RES:"+ parsedData);
+        if(index == -1) throw new Error("[ERROR] Matching request not found for response. RES: "+ parsedData);
 
         const req = requestStack.at(index);
         requestStack = requestStack.filter((value, i)=> {
@@ -55,7 +55,6 @@ function handleResponse(data: string | NonSharedBuffer) {
 }
 function ping(socket: net.Socket) {
     try {
-        const date = new Date();
         const now = Date.now();
         socket.write("HEARTBEAT:" + now);
         requestStack.push("HEARTBEAT:"+ now);
@@ -77,14 +76,14 @@ function start() {
 }
 
 
-async function init() {
+function init() {
     server.setMaxListeners(2);
     server.maxConnections = 1;
     server.prependListener('connection', (stream) => {
         requestStack = [];
         slowResponseBucket = 0;
         connectionStatus = true;
-        console.log(`Service Connected at ${Date().toLocaleString()} from ${stream.remoteAddress}:${stream.remotePort} starting ping `)
+        console.log(`Service Connected at ${Date().toLocaleString()} from ${stream.remoteAddress}:${stream.remotePort}... starting ping.`)
         //connection specific response metrics
         const slowRequestBucketInterval = setInterval(()=> {
             if(slowResponseBucket > 0) {
@@ -118,15 +117,9 @@ async function init() {
 
 }
 
-function lifecycle() {
-    return;
-}
-
-async function main() {
-    await init();
+function main() {
+    init();
     start();
-    lifecycle();
-    
 }
 
 

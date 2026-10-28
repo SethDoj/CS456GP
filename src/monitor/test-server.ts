@@ -11,7 +11,7 @@ function main() {
     })
     client.on('data', (data)=> {
         console.log("Recieved ping:", data.toString());
-        //client.write(data.toString());
+        client.write(data.toString());
     })
 }
 main();
