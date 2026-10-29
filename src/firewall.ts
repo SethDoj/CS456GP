@@ -1,5 +1,6 @@
 import net from "node:net";
-
+import * as dotenv from "dotenv"
+let challengeKey:string = "-1"
 //Heartbeat port: 5000;
 interface Config {
   port: number;
@@ -100,6 +101,8 @@ function connectToHeartbeat(port: number): void{
   //holds a partial message until its newline arrives
   let buffer = "";
   const socket = net.createConnection({ port, host: "127.0.0.1" }, () => {
+    console.log("Creating connection... attempting auth");
+    socket.write(challengeKey+ '\n');
     console.log("Connected to heartbeat service on port", port);
   });
 
@@ -125,6 +128,12 @@ function connectToHeartbeat(port: number): void{
 }
 
 function main(): void{
+  dotenv.config({ path: '../.env' });
+  challengeKey = process.env.CHALLENGE_KEY?? '-1';
+  if(challengeKey == '-1') {
+    console.error("Failed to load challenge key from environment");
+    process.exit(1);
+  }
   const config = parseCli(process.argv);
   const blockList = buildBlockList(config.blocked);
 
