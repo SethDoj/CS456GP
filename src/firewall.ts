@@ -128,7 +128,7 @@ function connectToHeartbeat(port: number): void{
 }
 
 function main(): void{
-  dotenv.config({ path: '../.env' });
+  dotenv.config();
   challengeKey = process.env.CHALLENGE_KEY?? '-1';
   if(challengeKey == '-1') {
     console.error("Failed to load challenge key from environment");
