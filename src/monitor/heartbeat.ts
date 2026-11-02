@@ -52,8 +52,6 @@ const server: net.Server =  net.createServer((socket) => {
                     console.log(styles.green, "Key valid", styles.reset);
                     console.log(`${styles.green}Service Connected at ${Date().toLocaleString()} from ${socket.remoteAddress}:${socket.remotePort}... starting ping.${styles.reset}`)
                     isAuthenticated = true;
-                    //TODO(failover): tell the supervisor, and make activate() in supervisor.ts
-                    //wait for this as well as the firewall's "active" message.
                     break;
                 }
                 else {
@@ -185,9 +183,7 @@ function main() {
     init();
     start();
     //TODO(failover): call startSupervisor from ./supervisor.ts here and delete
-    //run-supervisor.ts, so this process owns the firewalls. Then make failover()
-    //wait for this socket to close before promoting, or maxConnections = 1 will
-    //reject the new primary until its 2s reconnect.
+    //run-supervisor.ts, so this process owns the firewalls and can call failover().
 }
 
 
