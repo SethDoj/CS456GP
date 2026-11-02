@@ -12,6 +12,8 @@ const DROPPED_REQUEST_LIMIT = 10;
 const SLOW_REQUEST_TIME = 200;
 //how long until a request is considered dropped.
 const REQUEST_TIMEOUT_TIME = 10000;
+//TODO(failover): add FAILOVER_TIMEOUT = 3000. The limits above take about 21s
+//to report a frozen firewall, which is too slow to trigger failover.
 let requestStack: string[]=[];
 let connectionStatus = false;
 let slowResponseBucket = 0;
@@ -30,6 +32,9 @@ const server: net.Server =  net.createServer((socket) => {
     });
     socket.on('close', (stream)=> {
         console.log(`${styles.yellow}[WARN] Client disconnected.${styles.reset}`);
+        //TODO(failover): read isAuthenticated before it is reset below, and call
+        //failover("heartbeat lost") only if it was true. Otherwise test-server.ts
+        //or a client with a wrong key could get a healthy primary killed.
         connectionStatus = false;
         isAuthenticated = false;
         clearInterval(pingInterval);
@@ -47,6 +52,8 @@ const server: net.Server =  net.createServer((socket) => {
                     console.log(styles.green, "Key valid", styles.reset);
                     console.log(`${styles.green}Service Connected at ${Date().toLocaleString()} from ${socket.remoteAddress}:${socket.remotePort}... starting ping.${styles.reset}`)
                     isAuthenticated = true;
+                    //TODO(failover): tell the supervisor, and make activate() in supervisor.ts
+                    //wait for this as well as the firewall's "active" message.
                     break;
                 }
                 else {
@@ -100,6 +107,8 @@ function ping(socket: net.Socket) {
     }
 }
 function start() {
+    //TODO(failover): bind to 127.0.0.1. Any client holding the only connection
+    //slot delays a new primary, so this shouldn't accept remote connections.
     server.listen(PORT, () => {
     console.log('TCP server listening on port ', PORT);
     });
@@ -137,6 +146,9 @@ function init() {
                 console.error("[ERROR] Monitored process exceeded slow request limit! ", date.toLocaleString());
             }
         }, 2000)
+        //TODO(failover): this is where freeze detection goes. Every 500ms, call
+        //failover("heartbeat timeout") if the oldest entry in requestStack is older
+        //than FAILOVER_TIMEOUT. No auth check needed: pings only start after auth.
         const droppedRequestMonitor = setInterval(()=> {
             const droppedRequests = requestStack.filter((value)=> {
                 const sentAt = Number.parseInt(value.replace("HEARTBEAT:", ""));
@@ -172,6 +184,10 @@ function main() {
     }
     init();
     start();
+    //TODO(failover): call startSupervisor from ./supervisor.ts here and delete
+    //run-supervisor.ts, so this process owns the firewalls. Then make failover()
+    //wait for this socket to close before promoting, or maxConnections = 1 will
+    //reject the new primary until its 2s reconnect.
 }
 
 
