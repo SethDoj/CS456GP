@@ -1,42 +1,56 @@
 import * as net from 'net';
 import * as dotenv from 'dotenv';
 import {styles} from '../styles.ts'
+import {HeartbeatConfig} from './heartbeatConfig.ts'
+import {failover} from './supervisor.ts'
 
 
-const PORT = 5000;
-//how many slow/dropped requests until errored
-const SLOW_BUCKET_LIMIT = 10;
-const DROPPED_REQUEST_LIMIT = 10;
-//ms
-//this sets how long a request needs to take be "slow"
-const SLOW_REQUEST_TIME = 200;
-//how long until a request is considered dropped.
-const REQUEST_TIMEOUT_TIME = 10000;
-//TODO(failover): add FAILOVER_TIMEOUT = 3000. The limits above take about 21s
-//to report a frozen firewall, which is too slow to trigger failover.
-let requestStack: string[]=[];
-let connectionStatus = false;
-let slowResponseBucket = 0;
+type RequestResponseData = {
+    requestTime: number;
+    responseTime: number | null;
+    countedAsSlow: boolean;
+}
+
+let requestStack: RequestResponseData[]=[];
+let slowResponseBucket: RequestResponseData[]=[];
 let challengeKey: string = '-1';
-let isAuthenticated = false;
+const config = HeartbeatConfig;
+
+interface MonitoredStatus {
+    isAuthenticated: boolean,
+    connectionStatus: boolean,
+    error: string
+}
+const heartbeatStatus: MonitoredStatus = {
+    isAuthenticated: false,
+    connectionStatus: false,
+    error: ''
+}
+
+
 const server: net.Server =  net.createServer((socket) => {
     //holds a partial message until its newline arrives
     let buffer = '';
     const pingInterval = setInterval(()=> {
-        if(connectionStatus && isAuthenticated) {
+        if(heartbeatStatus.connectionStatus && heartbeatStatus.isAuthenticated) {
             ping(socket)
         }
-    }, 1000);
+    }, 500);
+
     socket.on('error', (err) => {
         console.warn(`${styles.yellow}[WARN] Socket error:', err.message${styles.reset}`);
     });
     socket.on('close', (stream)=> {
         console.log(`${styles.yellow}[WARN] Client disconnected.${styles.reset}`);
+        if(heartbeatStatus.isAuthenticated) {
+            failover("Client disconnected");
+        }
         //TODO(failover): read isAuthenticated before it is reset below, and call
         //failover("heartbeat lost") only if it was true. Otherwise test-server.ts
         //or a client with a wrong key could get a healthy primary killed.
-        connectionStatus = false;
-        isAuthenticated = false;
+        heartbeatStatus.connectionStatus = false;
+        heartbeatStatus.isAuthenticated = false;
+        heartbeatStatus.error= '';
         clearInterval(pingInterval);
     })
     socket.on('data', (data) => {
@@ -46,12 +60,12 @@ const server: net.Server =  net.createServer((socket) => {
         const lines = buffer.split('\n');
         buffer = lines.pop() ?? '';
         for(const line of lines) {
-            if(!isAuthenticated && line.length >0 ) {
+            if(!heartbeatStatus.isAuthenticated && line.length >0 ) {
                 console.log( "Revieved hash: ", line);
                 if(line == challengeKey) {
                     console.log(styles.green, "Key valid", styles.reset);
                     console.log(`${styles.green}Service Connected at ${Date().toLocaleString()} from ${socket.remoteAddress}:${socket.remotePort}... starting ping.${styles.reset}`)
-                    isAuthenticated = true;
+                    heartbeatStatus.isAuthenticated = true;
                     break;
                 }
                 else {
@@ -64,39 +78,15 @@ const server: net.Server =  net.createServer((socket) => {
         }
     });
 });
-
-
-function handleResponse(data: string | NonSharedBuffer) {
-    try {
-        const parsedData: string = data.toString();
-        const receivedTime: number = Date.now();    
-        const index: number = requestStack.indexOf(parsedData);
-        if(index == -1) throw new Error('[ERROR] Matching request not found for response. RES: "+ parsedData');
-
-        const req = requestStack.at(index);
-        requestStack = requestStack.filter((value, i)=> {
-            if(i != index) return value;
-        });
-        const reqTime = Number.parseInt(req?.replace("HEARTBEAT:", "")?? '-1');
-        //TODO: handle case of repeated slow RTT
-        if(reqTime == -1) throw new Error("[ERROR] failed to parse request time");
-
-        console.log(`Received: ${parsedData} at ${new Date().toLocaleString()}`);
-        if(receivedTime - reqTime > SLOW_REQUEST_TIME) {
-            slowResponseBucket++;
-            console.warn(`${styles.yellow}[WARN] Slow heartbeat RTT took [${receivedTime - reqTime}ms] at ${new Date().toLocaleString()}${styles.reset}`);
-        }
-        return;
-    } catch(error) {
-        console.log(styles.red, styles.bold, error, styles.reset);
-        return;
-    }
-}
 function ping(socket: net.Socket) {
     try {
         const now = Date.now();
         socket.write("HEARTBEAT:" + now + "\n");
-        requestStack.push("HEARTBEAT:"+ now);
+        requestStack.push({
+            requestTime: now,
+            responseTime: null,
+            countedAsSlow: false,
+        });
         console.log("Ping sent: ", now, " at ", new Date().toLocaleString());
         return;
     } catch(error) {
@@ -104,65 +94,160 @@ function ping(socket: net.Socket) {
         return;
     }
 }
+
+
+const getConnectionHealth = (): boolean => {
+    if(!heartbeatStatus.connectionStatus || !heartbeatStatus.isAuthenticated) {
+        return true;
+    }
+    //remove no longer slow requests from bucket
+    removeStaleSlowRequests();
+
+    let slowRequests: RequestResponseData[] =  getSlowRequests();
+    //clear slow requests older than window
+    slowRequests = slowRequests.filter((request)=> {
+        const diff = Date.now() - request.requestTime;
+        if(diff < config.SLOW_BUILDUP_WINDOW ) {
+            return request;
+        }
+    });
+    slowRequests.forEach((slowRequest)=> {  
+        slowResponseBucket.push(slowRequest);
+    });
+
+    let droppedRequests: RequestResponseData[] = getDroppedRequests();
+    //clear dropped older than window
+    droppedRequests = droppedRequests.filter((request)=> {
+        const diff = Date.now() - request.requestTime;
+        if(diff < config.DROPPED_REQUEST_WINDOW) {
+            return request;
+        }
+    });
+    if(droppedRequests.length > config.DROPPED_REQUEST_LIMIT) {
+        const error = `${styles.red}[ERROR] Exceeded maximum dropped requests in window size: ${config.DROPPED_REQUEST_WINDOW}, dropped requests: ${droppedRequests.length} at ${new Date().toLocaleString()} ${styles.reset}`
+        console.error(error);
+        heartbeatStatus.error = error;
+        return false;
+    }
+    if(slowResponseBucket.length >config.SLOW_BUCKET_LIMIT) {
+        const error = `${styles.red}[ERROR] Exceeded maximum slow requests in window size: ${config.SLOW_BUILDUP_WINDOW}, slow requests: ${slowResponseBucket.length} at ${new Date().toLocaleString()} ${styles.reset}`
+        console.error(error);
+        heartbeatStatus.error = error;
+     return false;
+    }
+    //remove resolved and out-of-window reuqests from the stack
+    cleanStack();
+    return true;
+}
+
+function removeStaleSlowRequests() {
+    slowResponseBucket = slowResponseBucket.filter((request)=> {
+        if(Date.now()-request.requestTime < (config.SLOW_REQUEST_WINDOW + config.SLOW_REQUEST_TIME)) {
+            return true;
+        }
+    })
+}
+
+function getSlowRequests(): RequestResponseData[] {
+    //includes out of window requests
+    return requestStack.filter((value)=> {
+        if(value.responseTime != null ) {
+            const timeSinceSent = value.responseTime- value.requestTime;
+            if(timeSinceSent > config.SLOW_REQUEST_TIME  && timeSinceSent < config.SLOW_REQUEST_WINDOW && value.countedAsSlow == false) {
+                value.countedAsSlow = true;
+                return value;
+            }
+        }
+    }); 
+}
+
+function getDroppedRequests(): RequestResponseData[] {
+    //includes out of window
+    return requestStack.filter((value)=> {
+        const timeSinceSent = Date.now()- value.requestTime;
+        if(timeSinceSent >= config.SLOW_REQUEST_WINDOW ) {
+            return value;
+        }
+    });
+}
+
+function cleanStack() {
+    requestStack = requestStack.filter((request)=> {
+        if(request.responseTime == null || Date.now() - request.requestTime <= (config.SLOW_REQUEST_WINDOW + config.SLOW_REQUEST_TIME)) {
+            return request;
+        }
+        //everything else goes away (correctly handled requests)
+    })
+}
+
+function handleResponse(data: string | NonSharedBuffer) {
+    try {
+        const receivedTime: number = Date.now();
+
+        const parsedData:number = Number.parseInt(data.toString().replace("HEARTBEAT:", "")?? '-1');
+        if(parsedData == -1) throw new Error('[ERROR] Failed to parse recieved request data: '+ data)
+        const reqIndex: number = requestStack.findIndex((value, index)=> {
+            if(parsedData == value.requestTime) {
+                return true;
+            }
+            return false;
+        });
+    
+        if(reqIndex == -1) throw new Error('[ERROR] Matching request not found for response. RES: "+ parsedData');
+
+        requestStack[reqIndex].responseTime = receivedTime;
+        console.log(`Received: ${parsedData} at ${new Date().toLocaleString()}`);
+        return;
+
+    } catch(error) {
+        console.log(styles.red, styles.bold, error, styles.reset);
+        return;
+    }
+}
+
 function start() {
     //TODO(failover): bind to 127.0.0.1. Any client holding the only connection
     //slot delays a new primary, so this shouldn't accept remote connections.
-    server.listen(PORT, () => {
-    console.log('TCP server listening on port ', PORT);
+    server.listen(config.PORT, '127.0.0.1',  () => {
+    console.log('TCP server listening on port ', config.PORT);
     });
     setInterval(()=> {
-        if(connectionStatus) return;
+        if(heartbeatStatus.connectionStatus) return;
         console.log("Waiting for service to connect...")
     }, 10000)
 }
 
 
 function init() {
-    server.setMaxListeners(2);
+
     server.maxConnections = 1;
     
     server.prependListener('connection', (stream) => {
-        if(!isAuthenticated) {
+        if(!heartbeatStatus.isAuthenticated) {
             console.log("Client connect request... awaiting hash.");
         }
         const authTimeout = setTimeout(()=> {
-            if(!isAuthenticated) {
+            if(!heartbeatStatus.isAuthenticated) {
                 console.error(styles.red, "Client failed to send hash, closing connection", styles.reset);
                 stream.destroy();
             }
         }, 5000)
         requestStack = [];
-        slowResponseBucket = 0;
-        connectionStatus = true;
-        //connection specific response metrics
-        const slowRequestBucketInterval = setInterval(()=> {
-            if(slowResponseBucket > 0) {
-                slowResponseBucket--;
+        slowResponseBucket = [];
+        heartbeatStatus.connectionStatus = true;
+        heartbeatStatus.error = '';
+
+        const monitor = setInterval(()=> {
+            const status = getConnectionHealth();
+            if(!status) {
+
+                //since failover breaks the connection this will stop spammed monitor errrors.
+                clearInterval(monitor);
+                failover(heartbeatStatus.error);
             }
-            if(slowResponseBucket > SLOW_BUCKET_LIMIT) {
-                const date = new Date();
-                console.error("[ERROR] Monitored process exceeded slow request limit! ", date.toLocaleString());
-            }
-        }, 2000)
-        //TODO(failover): this is where freeze detection goes. Every 500ms, call
-        //failover("heartbeat timeout") if the oldest entry in requestStack is older
-        //than FAILOVER_TIMEOUT. No auth check needed: pings only start after auth.
-        const droppedRequestMonitor = setInterval(()=> {
-            const droppedRequests = requestStack.filter((value)=> {
-                const sentAt = Number.parseInt(value.replace("HEARTBEAT:", ""));
-                if((Date.now() - sentAt) > REQUEST_TIMEOUT_TIME) {
-                    return true
-                }
-                return false
-            });
-            if(droppedRequests.length > DROPPED_REQUEST_LIMIT) {
-                const date = new Date();
-                console.error(styles.red, styles.bold, "[ERROR] Monitored process exceeded dropped request limit! Dropped ",droppedRequests.length," requests.", date.toLocaleString(), styles.reset);
-            }
-        }, 2000)
+        }, config.SLOW_REQUEST_TIME / 2)    
         stream.on('close', ()=> {
-            clearInterval(slowRequestBucketInterval);
-            clearInterval(droppedRequestMonitor);
+            clearInterval(monitor);
             clearTimeout(authTimeout);
         })
         
