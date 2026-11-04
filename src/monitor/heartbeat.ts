@@ -142,7 +142,7 @@ const getConnectionHealth = (): boolean => {
 
 function removeStaleSlowRequests() {
     slowResponseBucket = slowResponseBucket.filter((request)=> {
-        if(Date.now()-request.requestTime < (config.SLOW_BUILDUP_WINDOW + config.SLOW_REQUEST_TIME)) {
+        if(Date.now()-request.requestTime < config.SLOW_BUILDUP_WINDOW) {
             return true;
         }
     })
