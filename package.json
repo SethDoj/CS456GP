@@ -6,8 +6,7 @@
   "main": "index.js",
   "scripts": {
     "start": "tsx src/firewall.ts",
-    "startbeat": "tsx src/monitor/heartbeat.ts",
-    "supervise": "tsx src/monitor/run-supervisor.ts",
+    "supervise": "tsx src/monitor/heartbeat.ts",
     "testattack": "tsx src/monitor/test-server.ts",
     "typecheck": "tsc"
   },

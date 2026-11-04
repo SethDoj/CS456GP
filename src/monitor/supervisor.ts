@@ -15,6 +15,8 @@ interface Firewall {
 let active: Firewall | null = null;
 let standby: Firewall | null = null;
 let firewallArgs: string[] = [];
+// Only the first firewall of a supervisor run starts with fresh stats.
+let firstActivation = true;
 
 // fork() runs the real node process with the tsx loader. Spawning the tsx CLI
 // would give the wrapper's PID, and SIGKILL would leave the firewall itself alive.
@@ -56,11 +58,14 @@ function ensureStandby() {
 
 function promote() {
     const next = standby ?? spawnFirewall();
+    // Captured now, so a promotion before this one is ready can't also be fresh.
+    const fresh = firstActivation;
+    firstActivation = false;
     standby = null;
     active = next;
     next.ready.then(() => {
         console.log(`${styles.green}Activating firewall ${next.process.pid}.${styles.reset}`);
-        next.process.send({ type: 'activate' });
+        next.process.send({ type: 'activate', fresh });
     });
     setTimeout(ensureStandby, RESPAWN_DELAY);
 }
