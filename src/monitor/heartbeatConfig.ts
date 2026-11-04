@@ -6,7 +6,7 @@
 export const HeartbeatConfig = {
     PORT: 5000,
     //how many slow/dropped requests until errored
-    SLOW_BUCKET_LIMIT: 3,
+    SLOW_BUCKET_LIMIT: 10,
     //slow requests are considered dropped after 2200 ms, if more than ten occur in this window we will promote.
     SLOW_BUILDUP_WINDOW: 30000,
     DROPPED_REQUEST_LIMIT: 2,

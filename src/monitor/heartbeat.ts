@@ -133,7 +133,7 @@ const getConnectionHealth = (): boolean => {
         const error = `${styles.red}[ERROR] Exceeded maximum slow requests in window size: ${config.SLOW_BUILDUP_WINDOW}, slow requests: ${slowResponseBucket.length} at ${new Date().toLocaleString()} ${styles.reset}`
         console.error(error);
         heartbeatStatus.error = error;
-     return false;
+        return false;
     }
     //remove resolved and out-of-window reuqests from the stack
     cleanStack();
@@ -142,7 +142,7 @@ const getConnectionHealth = (): boolean => {
 
 function removeStaleSlowRequests() {
     slowResponseBucket = slowResponseBucket.filter((request)=> {
-        if(Date.now()-request.requestTime < (config.SLOW_REQUEST_WINDOW + config.SLOW_REQUEST_TIME)) {
+        if(Date.now()-request.requestTime < (config.SLOW_BUILDUP_WINDOW + config.SLOW_REQUEST_TIME)) {
             return true;
         }
     })
@@ -238,8 +238,7 @@ function init() {
         heartbeatStatus.error = '';
 
         const monitor = setInterval(()=> {
-            const status = getConnectionHealth();
-            if(!status) {
+            if(!getConnectionHealth) {
 
                 //since failover breaks the connection this will stop spammed monitor errrors.
                 clearInterval(monitor);
