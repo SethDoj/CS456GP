@@ -1,6 +1,12 @@
 import net from "node:net";
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import * as dotenv from "dotenv"
 let challengeKey:string = "-1"
+// In /tmp rather than the project because the project is on NFS.
+const CHECKPOINT_FILE = "/tmp/cs456-checkpoint.json";
+const CHECKPOINT_TMP = CHECKPOINT_FILE + ".tmp";
+//ms
+const CHECKPOINT_INTERVAL = 1000;
 //Heartbeat port: 5000;
 interface Config {
   port: number;
@@ -127,6 +133,65 @@ function connectToHeartbeat(port: number): void{
   });
 }
 
+function createServer(blockList: net.BlockList, config: Config, stats: Stats): net.Server{
+  return net.createServer((socket) => {
+    console.log("Server starting on", config.port, "at", stats.startedAt,);
+    console.log("Blocklist:", blockList);
+    handleConnection(socket, blockList, config, stats);
+  });
+}
+
+// Writes to a temp file first, so being killed mid-write leaves the real file intact.
+function saveStats(stats: Stats): void{
+  try {
+    writeFileSync(CHECKPOINT_TMP, JSON.stringify(stats));
+    renameSync(CHECKPOINT_TMP, CHECKPOINT_FILE);
+  } catch(err) {
+    console.error(`Checkpoint failed: ${(err as Error).message}`);
+  }
+}
+
+// A missing or unreadable checkpoint only resets the counts; the blocklist comes from --block.
+function loadStats(): Stats{
+  try {
+    return JSON.parse(readFileSync(CHECKPOINT_FILE, "utf8"));
+  } catch {
+    return { allowed: 0, rejected: 0, startedAt: new Date().toISOString() };
+  }
+}
+
+// Runs once, when the supervisor promotes this standby.
+function activate(config: Config): void{
+  const stats = loadStats();
+  console.log("Activating with stats:", stats);
+
+  const server = createServer(buildBlockList(config.blocked), config, stats);
+  // Never set reusePort here: the port being exclusive stops two firewalls serving at once.
+  server.on('error', (err) => {
+    console.error(`Server error: ${err.message}`);
+    process.exit(1);
+  });
+  server.listen(config.port);
+
+  connectToHeartbeat(config.healthPort);
+  setInterval(() => saveStats(stats), CHECKPOINT_INTERVAL);
+  setTimeout(blockServer, Math.random() * 20000 + 15000);
+}
+
+// Idle until the supervisor promotes this process: no port, no checkpoint writes.
+function waitForActivation(config: Config): void{
+  if(!process.send){
+    console.error("Run this through the supervisor: npm run supervise -- --port <port>");
+    process.exit(1);
+  }
+  // Without a supervisor nothing can replace this process, so it stops too.
+  process.on('disconnect', () => process.exit(1));
+  process.on('message', (message: { type: string }) => {
+    if(message.type === "activate") activate(config);
+  });
+  process.send({ type: "ready" });
+}
+
 function main(): void{
   dotenv.config();
   challengeKey = process.env.CHALLENGE_KEY?? '-1';
@@ -135,24 +200,7 @@ function main(): void{
     process.exit(1);
   }
   const config = parseCli(process.argv);
-  const blockList = buildBlockList(config.blocked);
 
-  const stats: Stats = {
-    allowed: 0,
-    rejected: 0,
-    startedAt: new Date().toISOString(),
-  };
-
-  connectToHeartbeat(config.healthPort);
-
-  const server = net.createServer((socket) => {
-    console.log("Server starting on", config.port, "at", stats.startedAt,);
-    console.log("Blocklist:", blockList);
-    handleConnection(socket, blockList, config, stats);
-  });
-  server.listen(config.port);
-
-  setTimeout(blockServer, Math.random() * 20000 + 15000);
-
+  waitForActivation(config);
 }
 main();

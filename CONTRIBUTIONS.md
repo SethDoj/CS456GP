@@ -2,4 +2,4 @@
 
 Nate - Attacker script, heartbeat service, video demo
 
-Seth - Firewall service, some heartbeat work
+Seth - Firewall service, some heartbeat work, Project doc
