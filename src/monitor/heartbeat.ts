@@ -233,17 +233,18 @@ function init() {
                 stream.destroy();
             }
         }, 5000);
-        if(heartbeatStatus.isAuthenticated && heartbeatStatus.connectionStatus && heartbeatStatus.isFailedOver) {
-            console.log(styles.green, styles.bold, "[FAILOVER] Service restored.", styles.reset);
-            heartbeatStatus.isFailedOver = false;
-        }
+        
         requestStack = [];
         slowResponseBucket = [];
         heartbeatStatus.connectionStatus = true;
         heartbeatStatus.error = '';
 
         const monitor = setInterval(()=> {
-            if(!getConnectionHealth) {
+            if(heartbeatStatus.isAuthenticated && heartbeatStatus.connectionStatus && heartbeatStatus.isFailedOver) {
+                console.log(styles.green, styles.bold, "[FAILOVER] Service restored.", styles.reset);
+                heartbeatStatus.isFailedOver = false;
+            }
+            if(!getConnectionHealth()) {
                 //since failover breaks the connection this will stop spammed monitor errrors.
                 clearInterval(monitor);
                 failover(heartbeatStatus.error);
