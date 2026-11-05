@@ -2,7 +2,7 @@ import * as net from 'net';
 import * as dotenv from 'dotenv';
 import {styles} from '../styles.ts'
 import {HeartbeatConfig} from './heartbeatConfig.ts'
-import {failover} from './supervisor.ts'
+import {failover, startSupervisor} from './supervisor.ts'
 
 
 type RequestResponseData = {
@@ -206,8 +206,6 @@ function handleResponse(data: string | NonSharedBuffer) {
 }
 
 function start() {
-    //TODO(failover): bind to 127.0.0.1. Any client holding the only connection
-    //slot delays a new primary, so this shouldn't accept remote connections.
     server.listen(config.PORT, '127.0.0.1',  () => {
     console.log('TCP server listening on port ', config.PORT);
     });
@@ -273,8 +271,8 @@ function main() {
     }
     init();
     start();
-    //TODO(failover): call startSupervisor from ./supervisor.ts here and delete
-    //run-supervisor.ts, so this process owns the firewalls and can call failover().
+    //firewall flags pass through; children inherit CHALLENGE_KEY from this process.
+    startSupervisor(process.argv.slice(2));
 }
 
 

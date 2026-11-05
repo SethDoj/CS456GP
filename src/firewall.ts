@@ -151,18 +151,23 @@ function saveStats(stats: Stats): void{
   }
 }
 
+function newStats(): Stats{
+  return { allowed: 0, rejected: 0, startedAt: new Date().toISOString() };
+}
+
 // A missing or unreadable checkpoint only resets the counts; the blocklist comes from --block.
 function loadStats(): Stats{
   try {
     return JSON.parse(readFileSync(CHECKPOINT_FILE, "utf8"));
   } catch {
-    return { allowed: 0, rejected: 0, startedAt: new Date().toISOString() };
+    return newStats();
   }
 }
 
-// Runs once, when the supervisor promotes this standby.
-function activate(config: Config): void{
-  const stats = loadStats();
+// Runs once, when the supervisor promotes this standby. fresh ignores the
+// checkpoint left by a previous supervisor run.
+function activate(config: Config, fresh: boolean): void{
+  const stats = fresh ? newStats() : loadStats();
   console.log("Activating with stats:", stats);
 
   const server = createServer(buildBlockList(config.blocked), config, stats);
@@ -186,8 +191,8 @@ function waitForActivation(config: Config): void{
   }
   // Without a supervisor nothing can replace this process, so it stops too.
   process.on('disconnect', () => process.exit(1));
-  process.on('message', (message: { type: string }) => {
-    if(message.type === "activate") activate(config);
+  process.on('message', (message: { type: string, fresh?: boolean }) => {
+    if(message.type === "activate") activate(config, message.fresh === true);
   });
   process.send({ type: "ready" });
 }
