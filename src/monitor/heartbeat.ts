@@ -19,12 +19,14 @@ const config = HeartbeatConfig;
 interface MonitoredStatus {
     isAuthenticated: boolean,
     connectionStatus: boolean,
-    error: string
+    error: string,
+    isFailedOver: boolean
 }
 const heartbeatStatus: MonitoredStatus = {
     isAuthenticated: false,
     connectionStatus: false,
-    error: ''
+    error: '',
+    isFailedOver: false
 }
 
 
@@ -44,10 +46,8 @@ const server: net.Server =  net.createServer((socket) => {
         console.log(`${styles.yellow}[WARN] Client disconnected.${styles.reset}`);
         if(heartbeatStatus.isAuthenticated) {
             failover("Client disconnected");
+            heartbeatStatus.isFailedOver = true;
         }
-        //TODO(failover): read isAuthenticated before it is reset below, and call
-        //failover("heartbeat lost") only if it was true. Otherwise test-server.ts
-        //or a client with a wrong key could get a healthy primary killed.
         heartbeatStatus.connectionStatus = false;
         heartbeatStatus.isAuthenticated = false;
         heartbeatStatus.error= '';
@@ -211,10 +211,13 @@ function start() {
     server.listen(config.PORT, '127.0.0.1',  () => {
     console.log('TCP server listening on port ', config.PORT);
     });
-    setInterval(()=> {
+    const connectionWait = setInterval(()=> {
         if(heartbeatStatus.connectionStatus) return;
         console.log("Waiting for service to connect...")
     }, 10000)
+    server.addListener('close', (socket)=> {
+        clearInterval(connectionWait);
+    })
 }
 
 
@@ -231,7 +234,11 @@ function init() {
                 console.error(styles.red, "Client failed to send hash, closing connection", styles.reset);
                 stream.destroy();
             }
-        }, 5000)
+        }, 5000);
+        if(heartbeatStatus.isAuthenticated && heartbeatStatus.connectionStatus && heartbeatStatus.isFailedOver) {
+            console.log(styles.green, styles.bold, "[FAILOVER] Service restored.", styles.reset);
+            heartbeatStatus.isFailedOver = false;
+        }
         requestStack = [];
         slowResponseBucket = [];
         heartbeatStatus.connectionStatus = true;
@@ -239,10 +246,10 @@ function init() {
 
         const monitor = setInterval(()=> {
             if(!getConnectionHealth) {
-
                 //since failover breaks the connection this will stop spammed monitor errrors.
                 clearInterval(monitor);
                 failover(heartbeatStatus.error);
+                heartbeatStatus.isFailedOver = true;
             }
         }, config.SLOW_REQUEST_TIME / 2)    
         stream.on('close', ()=> {
