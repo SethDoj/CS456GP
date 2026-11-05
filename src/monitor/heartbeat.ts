@@ -18,23 +18,33 @@ const config = HeartbeatConfig;
 
 interface MonitoredStatus {
     isAuthenticated: boolean,
+    authenticatedPorts: number[];
     connectionStatus: boolean,
     error: string,
     isFailedOver: boolean
 }
 const heartbeatStatus: MonitoredStatus = {
     isAuthenticated: false,
+    authenticatedPorts: [],
     connectionStatus: false,
     error: '',
     isFailedOver: false
 }
 
 
+const authenticated = (socket: net.Socket): boolean => {
+    if(!socket.remotePort) {
+        return false;
+    }
+    const isAuthenticated = heartbeatStatus.authenticatedPorts.includes(socket.remotePort);
+    return isAuthenticated;
+}
+
 const server: net.Server =  net.createServer((socket) => {
     //holds a partial message until its newline arrives
     let buffer = '';
     const pingInterval = setInterval(()=> {
-        if(heartbeatStatus.connectionStatus && heartbeatStatus.isAuthenticated) {
+        if(heartbeatStatus.connectionStatus &&  authenticated(socket)) {
             ping(socket)
         }
     }, 500);
@@ -43,6 +53,9 @@ const server: net.Server =  net.createServer((socket) => {
         console.warn(`${styles.yellow}[WARN] Socket error:', err.message${styles.reset}`);
     });
     socket.on('close', (stream)=> {
+        if(!authenticated(socket)) {
+            return;
+        }
         console.log(`${styles.yellow}[WARN] Client disconnected.${styles.reset}`);
         if(heartbeatStatus.isAuthenticated) {
             failover("Client disconnected");
@@ -52,7 +65,7 @@ const server: net.Server =  net.createServer((socket) => {
         heartbeatStatus.isAuthenticated = false;
         heartbeatStatus.error= '';
         clearInterval(pingInterval);
-    })
+    });
     socket.on('data', (data) => {
         //messages are newline-delimited since TCP can merge or split them
         
@@ -66,6 +79,12 @@ const server: net.Server =  net.createServer((socket) => {
                     console.log(styles.green, "Key valid", styles.reset);
                     console.log(`${styles.green}Service Connected at ${Date().toLocaleString()} from ${socket.remoteAddress}:${socket.remotePort}... starting ping.${styles.reset}`)
                     heartbeatStatus.isAuthenticated = true;
+                    const authenticatedPort = socket.remotePort;
+                    if(!authenticatedPort) {
+                        socket.destroy(new Error("Failed to obtain remote port for authentication"));
+                        return;
+                    }
+                    heartbeatStatus.authenticatedPorts.push(socket.remotePort)
                     break;
                 }
                 else {
@@ -205,6 +224,7 @@ function handleResponse(data: string | NonSharedBuffer) {
     }
 }
 
+
 function start() {
     server.listen(config.PORT, '127.0.0.1',  () => {
     console.log('TCP server listening on port ', config.PORT);
@@ -214,6 +234,7 @@ function start() {
         console.log("Waiting for service to connect...")
     }, 10000)
     server.addListener('close', (socket)=> {
+
         clearInterval(connectionWait);
     })
 }
@@ -221,7 +242,7 @@ function start() {
 
 function init() {
 
-    server.maxConnections = 1;
+    server.maxConnections = 50;
     
     server.prependListener('connection', (stream) => {
         if(!heartbeatStatus.isAuthenticated) {
@@ -232,7 +253,7 @@ function init() {
                 console.error(styles.red, "Client failed to send hash, closing connection", styles.reset);
                 stream.destroy();
             }
-        }, 5000);
+        }, 50);
         
         requestStack = [];
         slowResponseBucket = [];
@@ -252,14 +273,15 @@ function init() {
             }
         }, config.SLOW_REQUEST_TIME / 2)    
         stream.on('close', ()=> {
+            if(!authenticated(stream)) {
+                return;
+            }
             clearInterval(monitor);
             clearTimeout(authTimeout);
         })
         
     });
-    
     return;
-
 }
 
 function main() {
